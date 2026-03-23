@@ -2,38 +2,26 @@
 
 import { useState } from "react";
 import Navbar from "@/components/Navbar";
+import IntakeForm from "@/components/IntakeForm";
 import TriageResult from "@/components/TriageResult";
 import type { Contract } from "@/lib/types";
 
 type View = "intake" | "result";
 
-// IntakeForm is wired in here once created — placeholder for now
-function IntakePlaceholder({
-  onSuccess,
-}: {
-  onSuccess: (contract: Contract) => void;
-}) {
-  void onSuccess; // will be used by IntakeForm
-  return (
-    <div className="max-w-3xl mx-auto px-6 py-16 text-center">
-      <p className="text-sm text-neutral-400">
-        Intake form — to be built in the next step.
-      </p>
-    </div>
-  );
-}
-
 export default function DashboardPage() {
   const [view, setView] = useState<View>("intake");
   const [contract, setContract] = useState<Contract | null>(null);
+  const [assignedOfficerName, setAssignedOfficerName] = useState<string | null>(null);
 
-  function handleIntakeSuccess(submitted: Contract) {
+  function handleIntakeSuccess(submitted: Contract, officerName: string | null) {
     setContract(submitted);
+    setAssignedOfficerName(officerName);
     setView("result");
   }
 
   function handleNewIntake() {
     setContract(null);
+    setAssignedOfficerName(null);
     setView("intake");
   }
 
@@ -42,11 +30,15 @@ export default function DashboardPage() {
       <Navbar />
 
       {view === "intake" && (
-        <IntakePlaceholder onSuccess={handleIntakeSuccess} />
+        <IntakeForm onSuccess={handleIntakeSuccess} />
       )}
 
       {view === "result" && contract && (
-        <TriageResult contract={contract} onNewIntake={handleNewIntake} />
+        <TriageResult
+          contract={contract}
+          assignedOfficerName={assignedOfficerName}
+          onNewIntake={handleNewIntake}
+        />
       )}
     </div>
   );

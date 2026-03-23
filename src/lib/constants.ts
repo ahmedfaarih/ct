@@ -39,6 +39,21 @@ export const ROUTING_OVERRIDES: Record<string, string> = {
   ip_transfer: "IP Legal",
 };
 
+// All possible department values for legal officer profiles.
+// A reviewer/admin's `department` field must exactly match one of these
+// for auto-assignment to work on contract submission.
+export const ROUTE_DEPARTMENTS: string[] = [
+  "Legal Counsel",
+  "IT Legal / Commercial",
+  "Commercial Legal",
+  "HR Legal",
+  "Data Protection Officer",
+  "Procurement Legal",
+  "IP Legal",
+  "General Legal",
+  "Public Sector Legal",
+];
+
 // Checklist items per contract type
 export const CONTRACT_CHECKLISTS: Record<string, string[]> = {
   nda: [

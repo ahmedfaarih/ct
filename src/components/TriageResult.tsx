@@ -1,16 +1,21 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
-import type { Contract, ChecklistItem } from "@/lib/types";
+import type { Contract, ChecklistItem, ContractVersion, Profile } from "@/lib/types";
 import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
 import { Card, CardHeader, CardTitle, CardSection } from "@/components/ui/Card";
 import ClauseAnalysis from "@/components/ClauseAnalysis";
+import VersionHistory from "@/components/VersionHistory";
+import NewVersionForm from "@/components/NewVersionForm";
+import AssignDropdown from "@/components/AssignDropdown";
 
 interface Props {
   contract: Contract;
+  assignedOfficerName?: string | null;
   onNewIntake: () => void;
+  backLabel?: string;
 }
 
 function formatDate(iso: string) {
@@ -32,10 +37,44 @@ function DetailRow({ label, value }: { label: string; value: string }) {
   );
 }
 
-export default function TriageResult({ contract, onNewIntake }: Props) {
+export default function TriageResult({ contract: initialContract, assignedOfficerName: initialOfficerName, onNewIntake, backLabel = "New Intake" }: Props) {
   const supabase = createClient();
-  const [checklist, setChecklist] = useState<ChecklistItem[]>(contract.checklist);
+  const [contract, setContract] = useState<Contract>(initialContract);
+  const [checklist, setChecklist] = useState<ChecklistItem[]>(initialContract.checklist);
   const [saving, setSaving] = useState(false);
+  const [versions, setVersions] = useState<ContractVersion[]>([]);
+  const [versionsLoading, setVersionsLoading] = useState(false);
+  const [showNewVersion, setShowNewVersion] = useState(false);
+  const [currentProfile, setCurrentProfile] = useState<Profile | null>(null);
+  const [officerName, setOfficerName] = useState<string | null>(initialOfficerName ?? null);
+
+  const completedCount = checklist.filter((i) => i.checked).length;
+
+  useEffect(() => {
+    async function init() {
+      // Fetch current user profile to determine if they can assign
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        const { data: p } = await supabase
+          .from("profiles")
+          .select("*")
+          .eq("id", user.id)
+          .single();
+        if (p) setCurrentProfile(p as Profile);
+      }
+
+      // Fetch version history
+      setVersionsLoading(true);
+      try {
+        const res = await fetch(`/api/contracts/${contract.id}/versions`);
+        const json = await res.json();
+        if (res.ok) setVersions(json.versions ?? []);
+      } finally {
+        setVersionsLoading(false);
+      }
+    }
+    init();
+  }, [contract.id, supabase]);
 
   async function toggleItem(id: string) {
     const updated = checklist.map((item) =>
@@ -50,7 +89,14 @@ export default function TriageResult({ contract, onNewIntake }: Props) {
     setSaving(false);
   }
 
-  const completedCount = checklist.filter((i) => i.checked).length;
+  function handleNewVersionSuccess(updated: Contract) {
+    setContract(updated);
+    setShowNewVersion(false);
+    // Refresh version history
+    fetch(`/api/contracts/${updated.id}/versions`)
+      .then((r) => r.json())
+      .then((json) => setVersions(json.versions ?? []));
+  }
 
   return (
     <div className="max-w-3xl mx-auto px-6 py-8 space-y-5">
@@ -65,14 +111,27 @@ export default function TriageResult({ contract, onNewIntake }: Props) {
               {contract.case_id}
             </h1>
             <Badge variant={contract.urgency}>{contract.urgency} Priority</Badge>
+            {contract.current_version > 1 && (
+              <span className="text-xs font-mono text-neutral-400 border border-neutral-200 px-1.5 py-0.5 rounded">
+                v{contract.current_version}
+              </span>
+            )}
           </div>
           <p className="text-sm text-neutral-500 mt-1.5">
             Routed to{" "}
             <span className="font-medium text-neutral-700">{contract.route}</span>
           </p>
+          {(officerName || contract.assigned_to) && (
+            <p className="text-sm text-neutral-500 mt-0.5">
+              Assigned to{" "}
+              <span className="font-medium text-neutral-700">
+                {officerName ?? "Legal Officer"}
+              </span>
+            </p>
+          )}
         </div>
         <Button variant="ghost" size="sm" onClick={onNewIntake} className="shrink-0">
-          New Intake
+          {backLabel}
         </Button>
       </div>
 
@@ -94,10 +153,13 @@ export default function TriageResult({ contract, onNewIntake }: Props) {
             <DetailRow label="Deadline" value={formatDate(contract.deadline)} />
           )}
           {contract.is_renewal && (
-            <DetailRow label="Renewal" value={contract.is_renewal} />
+            <DetailRow label="Status" value={contract.is_renewal} />
           )}
           <DetailRow label="Risk Score" value={String(contract.risk_score)} />
           <DetailRow label="Submitted" value={formatDate(contract.created_at)} />
+          {contract.file_name && (
+            <DetailRow label="File" value={contract.file_name} />
+          )}
         </dl>
 
         {contract.risk_factors.length > 0 && (
@@ -125,6 +187,27 @@ export default function TriageResult({ contract, onNewIntake }: Props) {
         )}
       </Card>
 
+      {/* Assignment — visible to reviewer/admin only */}
+      {currentProfile && ["reviewer", "admin"].includes(currentProfile.role) && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Assignment</CardTitle>
+          </CardHeader>
+          <p className="text-xs text-neutral-500 mb-3">
+            Assign this contract to the legal officer responsible for review.
+          </p>
+          <AssignDropdown
+            contractId={contract.id}
+            currentAssignedTo={contract.assigned_to}
+            currentAssigneeName={officerName}
+            onAssigned={(assignedTo, name) => {
+              setContract((c) => ({ ...c, assigned_to: assignedTo }));
+              setOfficerName(name);
+            }}
+          />
+        </Card>
+      )}
+
       {/* Checklist */}
       <Card>
         <CardHeader>
@@ -132,12 +215,9 @@ export default function TriageResult({ contract, onNewIntake }: Props) {
             <CardTitle>Review Checklist</CardTitle>
             <span className="text-xs text-neutral-400 font-mono">
               {completedCount}/{checklist.length} complete
-              {saving && (
-                <span className="ml-2 text-neutral-300"> · saving</span>
-              )}
+              {saving && <span className="ml-2 text-neutral-300"> · saving</span>}
             </span>
           </div>
-          {/* Progress bar */}
           <div className="mt-3 h-1 bg-neutral-100 rounded-full overflow-hidden">
             <div
               className="h-full bg-neutral-900 rounded-full transition-all duration-300"
@@ -149,7 +229,6 @@ export default function TriageResult({ contract, onNewIntake }: Props) {
             />
           </div>
         </CardHeader>
-
         <div className="divide-y divide-neutral-100">
           {checklist.map((item) => (
             <label
@@ -189,6 +268,47 @@ export default function TriageResult({ contract, onNewIntake }: Props) {
           />
         </Card>
       )}
+
+      {/* Version History */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <CardTitle>Version History</CardTitle>
+            <span className="text-xs font-mono text-neutral-400">
+              v{contract.current_version}
+            </span>
+          </div>
+        </CardHeader>
+        {versionsLoading ? (
+          <p className="text-sm text-neutral-400 pb-2">Loading...</p>
+        ) : (
+          <VersionHistory versions={versions} currentVersion={contract.current_version} />
+        )}
+
+        {/* New Version Form */}
+        {!showNewVersion ? (
+          <div className="pt-3 border-t border-neutral-100 mt-3">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setShowNewVersion(true)}
+            >
+              Submit New Version
+            </Button>
+          </div>
+        ) : (
+          <div className="pt-3 border-t border-neutral-100 mt-3">
+            <p className="text-xs font-medium text-neutral-500 uppercase tracking-widest mb-3">
+              New Version
+            </p>
+            <NewVersionForm
+              contractId={contract.id}
+              onSuccess={handleNewVersionSuccess}
+              onCancel={() => setShowNewVersion(false)}
+            />
+          </div>
+        )}
+      </Card>
     </div>
   );
 }

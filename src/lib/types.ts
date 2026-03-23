@@ -50,6 +50,8 @@ export interface Contract {
   id: string;
   case_id: string;
   submitted_by: string | null;
+  assigned_to: string | null;
+  current_version: number;
   contract_type: string;
   type_label: string;
   counterparty: string;
@@ -68,6 +70,18 @@ export interface Contract {
   checklist: ChecklistItem[];
   created_at: string;
   updated_at: string;
+}
+
+export interface ContractVersion {
+  id: string;
+  contract_id: string;
+  version_number: number;
+  contract_text: string | null;
+  file_name: string | null;
+  notes: string | null;
+  submitted_by: string | null;
+  clause_results: ClauseResult[];
+  created_at: string;
 }
 
 export interface ContractType {

@@ -125,6 +125,7 @@ export default function Navbar({ contractCount }: { contractCount?: number }) {
               ? `Contracts (${contractCount})`
               : "Contracts"
           )}
+          {profile?.role === "admin" && navLink("/admin", "Admin")}
         </nav>
 
         {/* Right side */}

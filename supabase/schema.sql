@@ -119,3 +119,73 @@ CREATE POLICY "Reviewers and admins see all contracts"
 CREATE POLICY "Reviewers and admins can update contracts"
   ON public.contracts FOR UPDATE
   USING (public.get_my_role() IN ('reviewer', 'admin'));
+
+-- ============================================================
+-- MIGRATION: Assignment + Version Control
+-- Run these in Supabase SQL Editor AFTER the base schema above
+-- ============================================================
+
+ALTER TABLE public.contracts
+  ADD COLUMN IF NOT EXISTS assigned_to UUID REFERENCES public.profiles(id) ON DELETE SET NULL,
+  ADD COLUMN IF NOT EXISTS current_version INTEGER NOT NULL DEFAULT 1;
+
+CREATE TABLE IF NOT EXISTS public.contract_versions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  contract_id UUID NOT NULL REFERENCES public.contracts(id) ON DELETE CASCADE,
+  version_number INTEGER NOT NULL,
+  contract_text TEXT,
+  file_name TEXT,
+  notes TEXT,
+  submitted_by UUID REFERENCES public.profiles(id) ON DELETE SET NULL,
+  clause_results JSONB DEFAULT '[]',
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
+ALTER TABLE public.contract_versions ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Users can view versions of accessible contracts" ON public.contract_versions;
+DROP POLICY IF EXISTS "Submitters can insert versions for own contracts" ON public.contract_versions;
+
+CREATE POLICY "Users can view versions of accessible contracts"
+  ON public.contract_versions FOR SELECT
+  USING (
+    EXISTS (
+      SELECT 1 FROM public.contracts c WHERE c.id = contract_id
+      AND (
+        c.submitted_by = auth.uid()
+        OR public.get_my_role() IN ('reviewer', 'admin')
+      )
+    )
+  );
+
+CREATE POLICY "Submitters can insert versions for own contracts"
+  ON public.contract_versions FOR INSERT
+  WITH CHECK (
+    EXISTS (
+      SELECT 1 FROM public.contracts c
+      WHERE c.id = contract_id AND c.submitted_by = auth.uid()
+    )
+  );
+
+-- ============================================================
+-- MIGRATION: Case-type-based reviewer assignment
+-- Run in Supabase SQL Editor AFTER the migrations above
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS public.reviewer_contract_types (
+  reviewer_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+  contract_type TEXT NOT NULL,
+  PRIMARY KEY (reviewer_id, contract_type)
+);
+
+ALTER TABLE public.reviewer_contract_types ENABLE ROW LEVEL SECURITY;
+
+-- Admins can read/write all; reviewers can read their own
+CREATE POLICY "Admins can manage reviewer contract types"
+  ON public.reviewer_contract_types FOR ALL
+  USING (public.get_my_role() = 'admin')
+  WITH CHECK (public.get_my_role() = 'admin');
+
+CREATE POLICY "Reviewers can read own contract types"
+  ON public.reviewer_contract_types FOR SELECT
+  USING (reviewer_id = auth.uid());

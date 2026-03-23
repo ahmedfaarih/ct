@@ -10,12 +10,6 @@ interface AuthFormProps {
   mode: Mode;
 }
 
-const ROLES = [
-  { id: "requestor", label: "Requestor", description: "Submit contracts for review" },
-  { id: "reviewer", label: "Reviewer", description: "Review and manage all contracts" },
-  { id: "admin", label: "Admin", description: "Full access and administration" },
-];
-
 export default function AuthForm({ mode }: AuthFormProps) {
   const router = useRouter();
   const supabase = createClient();
@@ -23,7 +17,6 @@ export default function AuthForm({ mode }: AuthFormProps) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [fullName, setFullName] = useState("");
-  const [role, setRole] = useState("requestor");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -43,7 +36,7 @@ export default function AuthForm({ mode }: AuthFormProps) {
           email,
           password,
           options: {
-            data: { full_name: fullName, role },
+            data: { full_name: fullName, role: "requestor" },
           },
         });
         if (error) throw error;
@@ -105,39 +98,6 @@ export default function AuthForm({ mode }: AuthFormProps) {
           className="w-full px-3 py-2.5 bg-white border border-neutral-200 rounded text-neutral-900 placeholder-neutral-400 text-sm focus:outline-none focus:border-neutral-400 transition"
         />
       </div>
-
-      {mode === "signup" && (
-        <div>
-          <label className="block text-xs font-medium text-neutral-500 uppercase tracking-widest mb-2">
-            Role
-          </label>
-          <div className="space-y-1.5">
-            {ROLES.map((r) => (
-              <label
-                key={r.id}
-                className={`flex items-center gap-3 px-3 py-2.5 rounded border cursor-pointer transition ${
-                  role === r.id
-                    ? "border-neutral-400 bg-neutral-50"
-                    : "border-neutral-200 hover:border-neutral-300"
-                }`}
-              >
-                <input
-                  type="radio"
-                  name="role"
-                  value={r.id}
-                  checked={role === r.id}
-                  onChange={() => setRole(r.id)}
-                  className="accent-neutral-900"
-                />
-                <div>
-                  <p className="text-sm font-medium text-neutral-900">{r.label}</p>
-                  <p className="text-xs text-neutral-400">{r.description}</p>
-                </div>
-              </label>
-            ))}
-          </div>
-        </div>
-      )}
 
       {error && (
         <div className="px-3 py-2.5 rounded border border-neutral-200 bg-neutral-50 text-neutral-700 text-sm">
