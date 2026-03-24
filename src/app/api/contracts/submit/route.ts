@@ -75,10 +75,9 @@ interface PdfExtraction {
 async function runGeminiPdfAnalysis(pdfBase64: string): Promise<PdfExtraction> {
   const pdfPart = { inlineData: { mimeType: "application/pdf" as const, data: pdfBase64 } };
 
-  // Call 1: Extract metadata (small, focused response — no verbatim text)
-  let meta = { contractType: "other", counterparty: "", estimatedValue: "", deadline: "", riskFactors: [] as string[], contractText: "" };
-  try {
-    const metaResponse = await ai.models.generateContent({
+  // Run both calls in parallel to cut total latency roughly in half
+  const [metaResult, clauseResult] = await Promise.allSettled([
+    ai.models.generateContent({
       model: "gemini-2.5-flash",
       contents: [
         {
@@ -111,24 +110,8 @@ Risk factor definitions:
           ],
         },
       ],
-    });
-    const parsed = JSON.parse(extractJSONObject(metaResponse.text));
-    meta = {
-      contractType: parsed.contractType ?? "other",
-      counterparty: parsed.counterparty ?? "",
-      estimatedValue: parsed.estimatedValue ?? "",
-      deadline: parsed.deadline ?? "",
-      riskFactors: Array.isArray(parsed.riskFactors) ? parsed.riskFactors : [],
-      contractText: parsed.contractText ?? "",
-    };
-  } catch {
-    // meta stays at defaults
-  }
-
-  // Call 2: Extract named legal clauses (separate, focused call)
-  let clauseResults: ClauseResult[] = [];
-  try {
-    const clauseResponse = await ai.models.generateContent({
+    }),
+    ai.models.generateContent({
       model: "gemini-2.5-flash",
       contents: [
         {
@@ -154,11 +137,30 @@ Example: [{"clause":"Liability Cap","risk":"high","detail":"Liability is capped 
           ],
         },
       ],
-    });
-    const parsed = JSON.parse(extractJSONArray(clauseResponse.text));
-    clauseResults = Array.isArray(parsed) ? parsed : [];
-  } catch {
-    // clauseResults stays empty
+    }),
+  ]);
+
+  let meta = { contractType: "other", counterparty: "", estimatedValue: "", deadline: "", riskFactors: [] as string[], contractText: "" };
+  if (metaResult.status === "fulfilled") {
+    try {
+      const parsed = JSON.parse(extractJSONObject(metaResult.value.text));
+      meta = {
+        contractType: parsed.contractType ?? "other",
+        counterparty: parsed.counterparty ?? "",
+        estimatedValue: parsed.estimatedValue ?? "",
+        deadline: parsed.deadline ?? "",
+        riskFactors: Array.isArray(parsed.riskFactors) ? parsed.riskFactors : [],
+        contractText: parsed.contractText ?? "",
+      };
+    } catch { /* meta stays at defaults */ }
+  }
+
+  let clauseResults: ClauseResult[] = [];
+  if (clauseResult.status === "fulfilled") {
+    try {
+      const parsed = JSON.parse(extractJSONArray(clauseResult.value.text));
+      clauseResults = Array.isArray(parsed) ? parsed : [];
+    } catch { /* clauseResults stays empty */ }
   }
 
   return { ...meta, clauseResults };
