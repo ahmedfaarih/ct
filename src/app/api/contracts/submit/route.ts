@@ -1,3 +1,5 @@
+export const maxDuration = 120;
+
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { GoogleGenAI } from "@google/genai";
 import { cookies } from "next/headers";
@@ -17,23 +19,44 @@ function serviceClient() {
   );
 }
 
+function extractJSONArray(text: string | undefined): string {
+  if (!text) return "[]";
+  const cleaned = text.replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim();
+  const match = cleaned.match(/\[[\s\S]*\]/);
+  return match ? match[0] : cleaned;
+}
+
+function extractJSONObject(text: string | undefined): string {
+  if (!text) return "{}";
+  const cleaned = text.replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim();
+  const match = cleaned.match(/\{[\s\S]*\}/);
+  return match ? match[0] : cleaned;
+}
+
 async function runGeminiAnalysis(contractText: string): Promise<ClauseResult[]> {
   try {
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash",
-      contents: `You are a legal contract analysis assistant. Analyze the following contract text and extract key clauses. For each clause found, provide:
-- clause: name of the clause (e.g., "Liability", "Indemnification", "Termination")
-- risk: "low", "medium", or "high"
-- detail: one sentence explaining what to check
+      contents: `You are a legal contract review assistant. Analyze the following contract text and identify the key named legal clauses or provisions.
+
+For each clause, provide:
+- clause: short name of the clause (2-5 words, e.g. "Payment Terms", "Liability Cap", "Termination Rights", "Confidentiality", "Governing Law")
+- risk: "low", "medium", or "high" based on legal risk to the reviewing party
+- detail: one sentence explaining the key concern or what to verify
+
+Rules:
+- Only return named legal provisions, NOT raw paragraph text or sentence fragments
+- Identify 5-15 key clauses only
+- Each "clause" value must be a concise named provision, not a full sentence
 
 Respond ONLY with a JSON array, no markdown, no backticks, no preamble.
-Example: [{"clause":"Liability","risk":"high","detail":"Contains uncapped liability — verify caps and exclusions."}]
+Example: [{"clause":"Liability Cap","risk":"high","detail":"Liability is capped at contract value only — verify this is sufficient."}]
 
 Contract text:
 ${contractText}`,
     });
-    const text = response.text?.replace(/```json|```/g, "").trim();
-    return JSON.parse(text || "[]");
+    const parsed = JSON.parse(extractJSONArray(response.text));
+    return Array.isArray(parsed) ? parsed : [];
   } catch {
     return [];
   }
@@ -50,46 +73,95 @@ interface PdfExtraction {
 }
 
 async function runGeminiPdfAnalysis(pdfBase64: string): Promise<PdfExtraction> {
+  const pdfPart = { inlineData: { mimeType: "application/pdf" as const, data: pdfBase64 } };
+
+  // Call 1: Extract metadata (small, focused response — no verbatim text)
+  let meta = { contractType: "other", counterparty: "", estimatedValue: "", deadline: "", riskFactors: [] as string[], contractText: "" };
   try {
-    const response = await ai.models.generateContent({
+    const metaResponse = await ai.models.generateContent({
       model: "gemini-2.5-flash",
       contents: [
         {
           role: "user",
           parts: [
-            { inlineData: { mimeType: "application/pdf", data: pdfBase64 } },
+            pdfPart,
             {
-              text: `You are a legal contract analysis assistant. Read this PDF contract and extract all of the following.
+              text: `You are a legal contract analysis assistant. Read this PDF contract and extract the following fields.
 
 Respond ONLY with a JSON object, no markdown, no backticks, no preamble:
 {
   "contractType": "one of: nda | saas | service | employment | dpa | procurement | partnership | other",
-  "counterparty": "the other party's name",
-  "estimatedValue": "monetary value if stated, else empty string",
-  "deadline": "YYYY-MM-DD if a review or expiry deadline is stated, else empty string",
-  "riskFactors": ["array of applicable ids from: value_high, personal_data, cross_border, gov_entity, ip_transfer, auto_renew, exclusivity, liability_uncapped"],
-  "extractedText": "full contract text verbatim",
-  "clauses": [{"clause":"...","risk":"low|medium|high","detail":"one sentence explaining what to check"}]
-}`,
+  "counterparty": "full legal name of the counterparty (the other party in this agreement, not the party who submitted it)",
+  "estimatedValue": "total contract value if stated (e.g. 'USD 50,000'), else empty string",
+  "deadline": "contract expiry or review deadline in YYYY-MM-DD format, else empty string",
+  "riskFactors": ["use only these exact ids where applicable: value_high, personal_data, cross_border, gov_entity, ip_transfer, auto_renew, exclusivity, liability_uncapped"],
+  "contractText": "first 2000 characters of the contract body text"
+}
+
+Risk factor definitions:
+- value_high: contract value exceeds $100,000 USD equivalent
+- personal_data: involves processing of personal or private data
+- cross_border: parties or services span multiple countries
+- gov_entity: a government agency or public sector body is a party
+- ip_transfer: involves transfer or licensing of intellectual property
+- auto_renew: contract automatically renews unless notice is given
+- exclusivity: contains exclusivity or non-compete provisions
+- liability_uncapped: liability is unlimited or not capped at a fixed amount`,
             },
           ],
         },
       ],
     });
-    const raw = response.text?.replace(/```json|```/g, "").trim() ?? "{}";
-    const parsed = JSON.parse(raw);
-    return {
+    const parsed = JSON.parse(extractJSONObject(metaResponse.text));
+    meta = {
       contractType: parsed.contractType ?? "other",
-      counterparty: parsed.counterparty ?? "Unknown",
+      counterparty: parsed.counterparty ?? "",
       estimatedValue: parsed.estimatedValue ?? "",
       deadline: parsed.deadline ?? "",
       riskFactors: Array.isArray(parsed.riskFactors) ? parsed.riskFactors : [],
-      contractText: parsed.extractedText ?? "",
-      clauseResults: Array.isArray(parsed.clauses) ? parsed.clauses : [],
+      contractText: parsed.contractText ?? "",
     };
   } catch {
-    return { contractType: "other", counterparty: "Unknown", estimatedValue: "", deadline: "", riskFactors: [], contractText: "", clauseResults: [] };
+    // meta stays at defaults
   }
+
+  // Call 2: Extract named legal clauses (separate, focused call)
+  let clauseResults: ClauseResult[] = [];
+  try {
+    const clauseResponse = await ai.models.generateContent({
+      model: "gemini-2.5-flash",
+      contents: [
+        {
+          role: "user",
+          parts: [
+            pdfPart,
+            {
+              text: `You are a legal contract review assistant. Read this contract and identify its key named legal clauses or provisions.
+
+For each clause provide:
+- clause: short name (2-5 words, e.g. "Payment Terms", "Liability Cap", "Termination Rights", "Confidentiality", "Governing Law", "Dispute Resolution", "Indemnification", "Warranty", "Force Majeure")
+- risk: "low", "medium", or "high" based on legal risk to the reviewing party
+- detail: one sentence explaining the key concern or what to verify
+
+Rules:
+- Only return named legal provisions, NOT raw paragraph text, party names, or sentence fragments
+- Identify 5-15 key clauses
+- Each "clause" value must be a concise 2-5 word name, never a full sentence
+
+Respond ONLY with a JSON array, no markdown, no backticks, no preamble.
+Example: [{"clause":"Liability Cap","risk":"high","detail":"Liability is capped at contract value only — verify adequacy."}]`,
+            },
+          ],
+        },
+      ],
+    });
+    const parsed = JSON.parse(extractJSONArray(clauseResponse.text));
+    clauseResults = Array.isArray(parsed) ? parsed : [];
+  } catch {
+    // clauseResults stays empty
+  }
+
+  return { ...meta, clauseResults };
 }
 
 export async function POST(req: NextRequest) {

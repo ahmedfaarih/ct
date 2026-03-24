@@ -344,19 +344,63 @@ export default function IntakeForm({ onSuccess }: IntakeFormProps) {
           >
             {submitLoading
               ? inputMode === "upload"
-                ? "Extracting PDF and analysing..."
-                : "Analysing and submitting..."
+                ? "Analysing..."
+                : "Submitting..."
               : "Submit for Review"}
           </Button>
-          {submitLoading && (
-            <p className="text-center text-xs text-neutral-400 mt-2">
-              {inputMode === "upload"
-                ? "Gemini is reading your PDF and computing triage..."
-                : "Running AI clause analysis and computing triage..."}
-            </p>
-          )}
         </div>
       </form>
+
+      {/* Full-screen analysis overlay */}
+      {submitLoading && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-white/90 backdrop-blur-sm">
+          <div className="flex flex-col items-center gap-6 max-w-sm w-full px-8 text-center">
+            {/* Animated document icon */}
+            <div className="relative w-16 h-16">
+              <div className="absolute inset-0 rounded border-2 border-neutral-200 bg-white flex items-center justify-center">
+                <div className="w-8 h-10 border border-neutral-300 rounded-sm flex flex-col gap-1 p-1.5">
+                  <div className="h-px bg-neutral-300 rounded animate-pulse" style={{ animationDelay: "0ms" }} />
+                  <div className="h-px bg-neutral-300 rounded animate-pulse" style={{ animationDelay: "100ms" }} />
+                  <div className="h-px bg-neutral-300 rounded animate-pulse" style={{ animationDelay: "200ms" }} />
+                  <div className="h-px bg-neutral-300 rounded animate-pulse" style={{ animationDelay: "300ms" }} />
+                  <div className="h-px bg-neutral-200 w-3/4 rounded animate-pulse" style={{ animationDelay: "400ms" }} />
+                </div>
+              </div>
+              {/* Spinning ring */}
+              <div className="absolute inset-0 rounded-full border-2 border-transparent border-t-neutral-900 animate-spin" />
+            </div>
+
+            <div>
+              <p className="text-sm font-medium text-neutral-900">
+                {inputMode === "upload" ? "Analysing your document" : "Running AI analysis"}
+              </p>
+              <p className="text-xs text-neutral-500 mt-1">
+                {inputMode === "upload"
+                  ? "Gemini is reading your PDF — this may take up to a minute."
+                  : "Extracting clauses and computing triage..."}
+              </p>
+            </div>
+
+            {inputMode === "upload" && (
+              <div className="w-full space-y-2 text-left">
+                {[
+                  "Reading contract document",
+                  "Extracting clauses and risk factors",
+                  "Computing urgency and routing",
+                ].map((step, i) => (
+                  <div key={step} className="flex items-center gap-2.5">
+                    <div
+                      className="w-1.5 h-1.5 rounded-full bg-neutral-400 animate-pulse shrink-0"
+                      style={{ animationDelay: `${i * 400}ms` }}
+                    />
+                    <span className="text-xs text-neutral-500">{step}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
